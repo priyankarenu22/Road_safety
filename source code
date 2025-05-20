@@ -1,0 +1,74 @@
+import pandas as pd
+import joblib
+import gradio as gr
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+
+# Load dataset
+df = pd.read_csv("your_dataset.csv")  # Replace with your actual file name
+
+# Drop missing values
+df.dropna(inplace=True)
+
+# Encode categorical columns
+label_encoders = {}
+for col in ['State Name', 'City Name', 'Month', 'Day of Week', 'Vehicle Type Involved']:
+    le = LabelEncoder()
+    df[col] = le.fit_transform(df[col])
+    label_encoders[col] = le
+
+# Convert time to hour
+df['Hour'] = pd.to_datetime(df['Time of Day'], errors='coerce').dt.hour.fillna(0).astype(int)
+df['Accident Severity'] = df['Accident Severity'].map({'Minor': 0, 'Serious': 1, 'Fatal': 2})
+df.drop(columns=['Time of Day'], inplace=True)
+
+# Train model
+features = ['State Name', 'City Name', 'Month', 'Day of Week',
+            'Number of Vehicles Involved', 'Vehicle Type Involved', 'Hour']
+X = df[features]
+y = df['Accident Severity']
+X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
+model = RandomForestClassifier().fit(X_train, y_train)
+
+# Save model and encoders
+joblib.dump(model, "accident_severity_model.pkl")
+joblib.dump(label_encoders, "label_encoders.pkl")
+
+# Load for prediction
+model = joblib.load("accident_severity_model.pkl")
+encoders = joblib.load("label_encoders.pkl")
+
+# Gradio setup
+severity_map = {0: "Minor", 1: "Serious", 2: "Fatal"}
+options = {col: encoders[col].classes_.tolist() for col in encoders}
+
+def predict(state, city, month, day, vehicles, vtype, hour):
+    data = {
+        'State Name': encoders['State Name'].transform([state])[0],
+        'City Name': encoders['City Name'].transform([city])[0],
+        'Month': encoders['Month'].transform([month])[0],
+        'Day of Week': encoders['Day of Week'].transform([day])[0],
+        'Number of Vehicles Involved': vehicles,
+        'Vehicle Type Involved': encoders['Vehicle Type Involved'].transform([vtype])[0],
+        'Hour': hour
+    }
+    df_input = pd.DataFrame([data])
+    pred = model.predict(df_input)[0]
+    return severity_map[pred]
+
+# Gradio UI
+gr.Interface(
+    fn=predict,
+    inputs=[
+        gr.Dropdown(options['State Name'], label="State"),
+        gr.Dropdown(options['City Name'], label="City"),
+        gr.Dropdown(options['Month'], label="Month"),
+        gr.Dropdown(options['Day of Week'], label="Day"),
+        gr.Slider(1, 5, step=1, label="Vehicles Involved"),
+        gr.Dropdown(options['Vehicle Type Involved'], label="Vehicle Type"),
+        gr.Slider(0, 23, step=1, label="Hour of Day")
+    ],
+    outputs=gr.Textbox(label="Predicted Severity"),
+    title="AI-Driven Traffic Accident Severity Predictor"
+).launch()
